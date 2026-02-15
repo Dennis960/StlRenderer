@@ -59,6 +59,7 @@ Upload a 3D model (STL, GLB, glTF, OBJ, or TJS) as multipart form data, receive 
 | `projection` | string | "perspective" | Projection type: "perspective" or "orthographic"            |
 | `color`      | string | "#cccccc"     | Model color (hex code)                                      |
 | `padding`    | int    | 10            | Additional padding around the model (pixels)                |
+| `outline`    | bool   | false         | Draw black edge outlines on the model geometry              |
 
 **Example with curl:**
 
@@ -78,4 +79,8 @@ curl -X POST "http://localhost:8080/render?width=800&height=600&color=cc8844" \
 # TJS (CadQuery Three.js JSON)
 curl -X POST "http://localhost:8080/render?width=800&height=600" \
   -F "file=@model.json" -o render.png
+
+# With outline
+curl -X POST "http://localhost:8080/render?width=800&height=600&outline=true" \
+  -F "file=@model.stl" -o render.png
 ```

@@ -14,6 +14,7 @@ let gizmo = null;
 let aabb = { cx: 0, cy: 0, cz: 0, halfX: 1, halfY: 1, halfZ: 1 };
 let projection = 'perspective';
 let previewDirty = true;
+let outlineEnabled = false;
 
 // ===================================================================
 //  MAIN VIEWPORT — orbit controls, free exploration
@@ -276,6 +277,49 @@ function setProjection(proj) {
   markDirty();
 }
 
+// ── Outline toggle ─────────────────────────
+$('outlineToggle').addEventListener('change', e => {
+  outlineEnabled = e.target.checked;
+  if (currentMesh) {
+    if (outlineEnabled) {
+      applyOutlineToModel(currentMesh);
+    } else {
+      removeOutlineFromModel(currentMesh);
+    }
+  }
+  markDirty();
+});
+
+function applyOutlineToModel(model) {
+  model.traverse((child) => {
+    if (child.isMesh) {
+      const mesh = child;
+      const geometry = mesh.geometry;
+      const edges = new THREE.EdgesGeometry(geometry);
+      const outline = new THREE.LineSegments(
+        edges,
+        new THREE.LineBasicMaterial({ color: 0x000000 }),
+      );
+      outline.userData.isOutline = true;
+      mesh.add(outline);
+    }
+  });
+}
+
+function removeOutlineFromModel(model) {
+  const toRemove = [];
+  model.traverse((child) => {
+    if (child.isLineSegments && child.userData.isOutline) {
+      toRemove.push(child);
+    }
+  });
+  toRemove.forEach(c => {
+    c.parent.remove(c);
+    c.geometry.dispose();
+    c.material.dispose();
+  });
+}
+
 // ── Color picker ───────────────────────────
 $('colorPicker').addEventListener('input', e => {
   const hex = e.target.value;
@@ -293,8 +337,11 @@ $('resetBtn').addEventListener('click', () => {
   $('padding').value = '10';
   $('colorPicker').value = '#8ca0c8';
   $('colorHex').textContent = '#8ca0c8';
+  $('outlineToggle').checked = false;
+  outlineEnabled = false;
   setProjection('perspective');
   if (currentMesh) {
+    removeOutlineFromModel(currentMesh);
     currentMesh.rotation.set(0, 0, 0);
     currentMesh.material.color.set('#8ca0c8');
   }
@@ -527,6 +574,11 @@ function finishLoad(geometry) {
   }));
   scene.add(currentMesh);
 
+  // Apply outline if enabled
+  if (outlineEnabled) {
+    applyOutlineToModel(currentMesh);
+  }
+
   // Compute size
   const size = new THREE.Vector3();
   geometry.boundingBox.getSize(size);
@@ -572,6 +624,7 @@ function updateCurl() {
     projection: projection,
     color:      $('colorPicker').value.replace('#', ''),
     padding:    $('padding').value,
+    outline:    outlineEnabled,
   });
   $('curlPreview').textContent =
     `curl -X POST "${location.origin}/render?${p}" \\\n  -F "file=@${modelFile.name}" \\\n  -o render.png`;
@@ -596,6 +649,7 @@ async function doRender() {
     projection: projection,
     color:      $('colorPicker').value.replace('#', ''),
     padding:    $('padding').value,
+    outline:    outlineEnabled,
   });
 
   const form = new FormData();

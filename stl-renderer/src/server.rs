@@ -30,6 +30,8 @@ pub struct RenderParams {
     color: String,
     #[serde(default = "default_padding")]
     padding: u32,
+    #[serde(default)]
+    outline: bool,
 }
 
 fn default_width() -> u32 {
@@ -223,8 +225,10 @@ pub async fn render_endpoint(
     let mvp = mat4_mul(&proj, &view);
     let color = parse_hex_color(&params.color);
 
+    let outline = params.outline;
+
     log::info!(
-        "Rendering: {}x{}, rot=({:.1},{:.1},{:.1}), proj={}, color={}, pad={}, {} triangles",
+        "Rendering: {}x{}, rot=({:.1},{:.1},{:.1}), proj={}, color={}, pad={}, outline={}, {} triangles",
         width,
         height,
         rot_x,
@@ -233,10 +237,11 @@ pub async fn render_endpoint(
         params.projection,
         params.color,
         padding,
+        outline,
         transformed.len()
     );
 
-    let img = web::block(move || render(&transformed, &mvp, eye, width, height, color))
+    let img = web::block(move || render(&transformed, &mvp, eye, width, height, color, outline))
         .await
         .unwrap();
 
