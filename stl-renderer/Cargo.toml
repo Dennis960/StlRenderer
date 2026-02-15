@@ -1,0 +1,22 @@
+[package]
+name = "stl-renderer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+actix-multipart = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = "0.25"
+byteorder = "1"
+futures-util = "0.3"
+env_logger = "0.11"
+log = "0.4"
+gltf = "1"
+tobj = "4"
+ahash = "0.8"
+
+[profile.release]
+opt-level = 3

@@ -1,0 +1,17 @@
+services:
+  stl-renderer:
+    build: .
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 50M
+    healthcheck:
+      test: ["CMD", "stl-renderer", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

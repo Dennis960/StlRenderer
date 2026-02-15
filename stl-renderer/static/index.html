@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Model Renderer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <svg viewBox="0 0 24 24"><path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h4v4H7V7zm6 0h4v2h-4V7zm0 4h4v2h-4v-2zm-6 4h10v2H7v-2z"/></svg>
+  <h1>3D Model Renderer</h1>
+</header>
+
+<div class="app">
+  <aside class="sidebar">
+    <!-- Upload -->
+    <div>
+      <div class="section-title">Model</div>
+      <div class="upload-area" id="dropZone">
+        <div class="icon">📦</div>
+        <div class="label">Drop model or click to browse</div>
+        <div class="sublabel">STL · GLB/glTF · OBJ</div>
+        <div class="filename" id="fileName"></div>
+        <input type="file" id="fileInput" accept=".stl,.glb,.gltf,.obj">
+      </div>
+    </div>
+
+    <!-- Render size -->
+    <div>
+      <div class="section-title">Render Size</div>
+      <div class="control-group">
+        <div class="row">
+          <div class="field">
+            <label for="width">Width</label>
+            <input type="number" id="width" value="800" min="1" max="4096">
+          </div>
+          <div class="field">
+            <label for="height">Height</label>
+            <input type="number" id="height" value="600" min="1" max="4096">
+          </div>
+        </div>
+        <div class="field" style="margin-top:6px">
+          <label for="padding">Padding (px)</label>
+          <input type="number" id="padding" value="10" min="0" max="500">
+        </div>
+      </div>
+    </div>
+
+    <!-- Object Rotation -->
+    <div>
+      <div class="section-title">Object Rotation (°)</div>
+      <div class="control-group">
+        <div class="row">
+          <div class="field">
+            <label for="rotX">X</label>
+            <input type="number" id="rotX" value="0" step="1">
+          </div>
+          <div class="field">
+            <label for="rotY">Y</label>
+            <input type="number" id="rotY" value="0" step="1">
+          </div>
+          <div class="field">
+            <label for="rotZ">Z</label>
+            <input type="number" id="rotZ" value="0" step="1">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Projection -->
+    <div>
+      <div class="section-title">Projection</div>
+      <div class="control-group">
+        <div class="toggle-row">
+          <button class="toggle-btn active" id="btnPerspective">Perspective</button>
+          <button class="toggle-btn" id="btnOrthographic">Orthographic</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOV -->
+    <div id="fovSection">
+      <div class="section-title">Field of View</div>
+      <div class="control-group">
+        <div class="field">
+          <label for="fov">FOV (degrees)</label>
+          <input type="number" id="fov" value="45" min="1" max="179">
+        </div>
+      </div>
+    </div>
+
+    <!-- Color -->
+    <div>
+      <div class="section-title">Object Color</div>
+      <div class="control-group">
+        <div class="color-row">
+          <input type="color" id="colorPicker" value="#8ca0c8">
+          <span class="color-hex" id="colorHex">#8ca0c8</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="btn-row">
+      <button class="render-btn" id="renderBtn" disabled>Render PNG</button>
+      <button class="dl-btn" id="dlBtn">Save</button>
+    </div>
+    <div class="btn-row">
+      <button class="reset-btn" id="resetBtn">Reset All</button>
+    </div>
+    <div class="status-msg" id="statusMsg"></div>
+
+    <!-- Curl Preview -->
+    <div>
+      <div class="section-title">cURL Preview</div>
+      <pre class="curl-preview" id="curlPreview">Upload a file to see the curl command</pre>
+    </div>
+  </aside>
+
+  <!-- Three.js viewport -->
+  <div class="viewport" id="viewport">
+    <div class="hint" id="viewportHint">
+      <div class="big">⬡</div>
+      Upload a 3D model to preview
+    </div>
+    <!-- PNG preview overlay -->
+    <div class="preview-overlay" id="previewOverlay">
+      <div class="preview-label">PNG Preview</div>
+      <canvas id="previewCanvas"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Rendered PNG lightbox -->
+<div class="lightbox" id="lightbox">
+  <span class="close-hint">Click anywhere to close · Right-click image to save</span>
+  <img id="lightboxImg" alt="Rendered PNG">
+</div>
+
+<!-- Three.js from CDN via importmap -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
