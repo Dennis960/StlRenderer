@@ -60,6 +60,7 @@ Upload a 3D model (STL, GLB, glTF, OBJ, or TJS) as multipart form data, receive 
 | `color`      | string | "#cccccc"     | Model color (hex code)                                      |
 | `padding`    | int    | 10            | Additional padding around the model (pixels)                |
 | `outline`    | bool   | false         | Draw black edge outlines on the model geometry              |
+| `brightness` | float  | 1.0           | Light brightness multiplier (0–3)                           |
 
 **Example with curl:**
 

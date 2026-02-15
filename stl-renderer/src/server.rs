@@ -32,6 +32,12 @@ pub struct RenderParams {
     padding: u32,
     #[serde(default)]
     outline: bool,
+    #[serde(default = "default_brightness")]
+    brightness: f32,
+}
+
+fn default_brightness() -> f32 {
+    1.0
 }
 
 fn default_width() -> u32 {
@@ -226,9 +232,10 @@ pub async fn render_endpoint(
     let color = parse_hex_color(&params.color);
 
     let outline = params.outline;
+    let brightness = params.brightness.clamp(0.0, 5.0);
 
     log::info!(
-        "Rendering: {}x{}, rot=({:.1},{:.1},{:.1}), proj={}, color={}, pad={}, outline={}, {} triangles",
+        "Rendering: {}x{}, rot=({:.1},{:.1},{:.1}), proj={}, color={}, pad={}, outline={}, brightness={:.2}, {} triangles",
         width,
         height,
         rot_x,
@@ -238,10 +245,11 @@ pub async fn render_endpoint(
         params.color,
         padding,
         outline,
+        brightness,
         transformed.len()
     );
 
-    let img = web::block(move || render(&transformed, &mvp, eye, cam_target, is_ortho, width, height, color, outline))
+    let img = web::block(move || render(&transformed, &mvp, eye, cam_target, is_ortho, width, height, color, outline, brightness))
         .await
         .unwrap();
 

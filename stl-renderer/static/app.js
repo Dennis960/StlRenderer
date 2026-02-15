@@ -15,6 +15,7 @@ let aabb = { cx: 0, cy: 0, cz: 0, halfX: 1, halfY: 1, halfZ: 1 };
 let projection = 'perspective';
 let previewDirty = true;
 let outlineEnabled = false;
+let lightBrightness = 1.0;
 
 // ===================================================================
 //  MAIN VIEWPORT — orbit controls, free exploration
@@ -47,7 +48,15 @@ const light2 = new THREE.DirectionalLight(0xbbccee, 0.6);
 light2.position.set(-0.5, 0.3, -0.8).normalize();
 scene.add(light2);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+scene.add(ambientLight);
+
+function applyBrightness(val) {
+  lightBrightness = val;
+  light1.intensity = 1.0 * val;
+  light2.intensity = 0.6 * val;
+  // Keep ambient constant so the model stays slightly visible at brightness 0
+}
 
 // Grid
 const grid = new THREE.GridHelper(200, 20, 0x30363d, 0x22272e);
@@ -277,6 +286,14 @@ function setProjection(proj) {
   markDirty();
 }
 
+// ── Light brightness ───────────────────────
+$('brightness').addEventListener('input', e => {
+  const val = parseFloat(e.target.value);
+  $('brightnessValue').textContent = val.toFixed(2);
+  applyBrightness(val);
+  markDirty();
+});
+
 // ── Outline toggle ─────────────────────────
 $('outlineToggle').addEventListener('change', e => {
   outlineEnabled = e.target.checked;
@@ -339,6 +356,9 @@ $('resetBtn').addEventListener('click', () => {
   $('colorHex').textContent = '#8ca0c8';
   $('outlineToggle').checked = false;
   outlineEnabled = false;
+  $('brightness').value = '1';
+  $('brightnessValue').textContent = '1.00';
+  applyBrightness(1.0);
   setProjection('perspective');
   if (currentMesh) {
     removeOutlineFromModel(currentMesh);
@@ -625,6 +645,7 @@ function updateCurl() {
     color:      $('colorPicker').value.replace('#', ''),
     padding:    $('padding').value,
     outline:    outlineEnabled,
+    brightness: parseFloat($('brightness').value),
   });
   $('curlPreview').textContent =
     `curl -X POST "${location.origin}/render?${p}" \\\n  -F "file=@${modelFile.name}" \\\n  -o render.png`;
@@ -650,6 +671,7 @@ async function doRender() {
     color:      $('colorPicker').value.replace('#', ''),
     padding:    $('padding').value,
     outline:    outlineEnabled,
+    brightness: parseFloat($('brightness').value),
   });
 
   const form = new FormData();

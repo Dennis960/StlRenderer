@@ -42,6 +42,7 @@ pub fn render(
     height: u32,
     color: [f32; 3],
     outline: bool,
+    brightness: f32,
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
     let w = width as usize;
     let h = height as usize;
@@ -50,6 +51,7 @@ pub fn render(
 
     let light_dir = Vec3::new(0.3, 0.8, 0.5).normalize();
     let light_dir2 = Vec3::new(-0.5, 0.3, -0.8).normalize();
+    let brightness = brightness.max(0.0);
 
     // For orthographic projection the view rays are parallel, so use a
     // constant view direction (from target toward eye) for back-face culling.
@@ -94,11 +96,11 @@ pub fn render(
             continue;
         }
 
-        // Lighting
+        // Lighting – brightness scales the directional contribution
         let ndl1 = face_normal.dot(light_dir).max(0.0);
         let ndl2 = face_normal.dot(light_dir2).max(0.0);
         let ambient = 0.15;
-        let intensity = (ambient + 0.55 * ndl1 + 0.35 * ndl2).min(1.0);
+        let intensity = (ambient + (0.55 * ndl1 + 0.35 * ndl2) * brightness).min(1.0);
 
         let r = (color[0] * intensity).min(255.0) as u8;
         let g = (color[1] * intensity).min(255.0) as u8;
