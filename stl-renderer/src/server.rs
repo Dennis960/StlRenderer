@@ -126,13 +126,16 @@ pub async fn render_endpoint(
             .json(serde_json::json!({"error": "No file uploaded"}));
     }
 
-    let (triangles, mesh_min, mesh_max) = match parse_model(&file_data, &filename) {
+    let (mut triangles, mesh_min, mesh_max) = match parse_model(&file_data, &filename) {
         Ok(m) => m,
         Err(e) => {
             return HttpResponse::BadRequest()
                 .json(serde_json::json!({"error": format!("Parse error: {}", e)}));
         }
     };
+
+    // Free uploaded file data immediately — no longer needed after parsing
+    drop(file_data);
 
     let params = query.into_inner();
     let width = params.width.clamp(1, 4096);
@@ -145,26 +148,23 @@ pub async fn render_endpoint(
         (mesh_min.z + mesh_max.z) / 2.0,
     );
 
-    // Apply Euler rotation (intrinsic XYZ, matching Three.js)
+    // Apply Euler rotation (intrinsic XYZ, matching Three.js) — in-place to avoid second allocation
     let rot_x = params.rot_x.unwrap_or(0.0);
     let rot_y = params.rot_y.unwrap_or(0.0);
     let rot_z = params.rot_z.unwrap_or(0.0);
     let rot = rotation_matrix_xyz(rot_x, rot_y, rot_z);
 
-    let transformed: Vec<Triangle> = triangles
-        .iter()
-        .map(|t| Triangle {
-            v0: rotate_vec3(&rot, t.v0.sub(center)),
-            v1: rotate_vec3(&rot, t.v1.sub(center)),
-            v2: rotate_vec3(&rot, t.v2.sub(center)),
-            normal: rotate_vec3(&rot, t.normal).normalize(),
-        })
-        .collect();
+    for t in &mut triangles {
+        t.v0 = rotate_vec3(&rot, t.v0.sub(center));
+        t.v1 = rotate_vec3(&rot, t.v1.sub(center));
+        t.v2 = rotate_vec3(&rot, t.v2.sub(center));
+        t.normal = rotate_vec3(&rot, t.normal).normalize();
+    }
 
     // Compute AABB of the rotated mesh (rotation-dependent tight fit)
     let mut aabb_min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
     let mut aabb_max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
-    for t in &transformed {
+    for t in &triangles {
         for v in [t.v0, t.v1, t.v2] {
             aabb_min.x = aabb_min.x.min(v.x);
             aabb_min.y = aabb_min.y.min(v.y);
@@ -213,7 +213,7 @@ pub async fn render_endpoint(
         let tan_h = eff_half_fov_h.tan();
         let tan_v = eff_half_fov_v.tan();
         let mut min_dist: f32 = 0.1;
-        for t in &transformed {
+        for t in &triangles {
             for v in [t.v0, t.v1, t.v2] {
                 let dz = v.z - aabb_cz;
                 let d_h = dz + (v.x - aabb_cx).abs() / tan_h;
@@ -254,23 +254,27 @@ pub async fn render_endpoint(
         outline,
         brightness,
         outline_thickness,
-        transformed.len()
+        triangles.len()
     );
 
-    let img = web::block(move || render(&transformed, &mvp, eye, cam_target, is_ortho, width, height, color, outline, brightness, outline_thickness))
+    let pixel_data = web::block(move || render(&triangles, &mvp, eye, cam_target, is_ortho, width, height, color, outline, brightness, outline_thickness))
         .await
         .unwrap();
 
     let mut png_data = Vec::new();
-    let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
-    encoder
-        .write_image(
-            img.as_raw(),
-            img.width(),
-            img.height(),
-            image::ExtendedColorType::Rgba8,
-        )
-        .unwrap();
+    {
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+        encoder
+            .write_image(
+                &pixel_data,
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+    }
+    // Free raw pixel data immediately after PNG encoding
+    drop(pixel_data);
 
     HttpResponse::Ok()
         .content_type("image/png")

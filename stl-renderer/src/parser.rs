@@ -1,4 +1,5 @@
 use byteorder::{LittleEndian, ReadBytesExt};
+use serde::Deserialize;
 use std::io::{BufRead, BufReader, Cursor};
 
 use crate::math::{Triangle, Vec3};
@@ -326,8 +327,64 @@ fn parse_obj(data: &[u8]) -> Result<(Vec<Triangle>, Vec3, Vec3), String> {
 
 // ── TJS (Three.js JSON) Parser ──────────────────────────────────────────────
 
+// ── Typed deserialization structs (avoids massive serde_json::Value DOM) ─────
+
+#[derive(Deserialize)]
+struct TjsFile {
+    #[serde(default = "default_scale")]
+    scale: f32,
+    #[serde(default)]
+    vertices: Vec<f32>,
+    #[serde(default)]
+    faces: Vec<i64>,
+    #[serde(default)]
+    normals: Vec<f32>,
+    #[serde(default)]
+    uvs: Vec<Vec<f32>>,
+    #[serde(default)]
+    geometries: Vec<TjsGeometry>,
+}
+
+fn default_scale() -> f32 {
+    1.0
+}
+
+#[derive(Deserialize)]
+struct TjsGeometry {
+    #[serde(default)]
+    data: Option<TjsGeomData>,
+}
+
+#[derive(Deserialize)]
+struct TjsGeomData {
+    #[serde(default)]
+    attributes: Option<TjsAttributes>,
+    #[serde(default)]
+    index: Option<TjsIndexArray>,
+}
+
+#[derive(Deserialize)]
+struct TjsAttributes {
+    #[serde(default)]
+    position: Option<TjsTypedArray<f32>>,
+    #[serde(default)]
+    normal: Option<TjsTypedArray<f32>>,
+}
+
+#[derive(Deserialize)]
+struct TjsTypedArray<T> {
+    #[serde(default)]
+    array: Vec<T>,
+}
+
+#[derive(Deserialize)]
+struct TjsIndexArray {
+    #[serde(default)]
+    array: Vec<u32>,
+}
+
 fn parse_tjs(data: &[u8]) -> Result<(Vec<Triangle>, Vec3, Vec3), String> {
-    let json: serde_json::Value =
+    let tjs: TjsFile =
         serde_json::from_slice(data).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let mut triangles = Vec::new();
@@ -335,101 +392,59 @@ fn parse_tjs(data: &[u8]) -> Result<(Vec<Triangle>, Vec3, Vec3), String> {
     let mut max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
 
     // ── Modern BufferGeometry format (used by CadQuery TJS export) ───────
-    if let Some(geometries) = json.get("geometries").and_then(|g| g.as_array()) {
-        for geom in geometries {
-            let data_obj = match geom.get("data") {
-                Some(d) => d,
-                None => continue,
-            };
-            let attrs = match data_obj.get("attributes") {
-                Some(a) => a,
-                None => continue,
-            };
+    for geom in &tjs.geometries {
+        let data_obj = match &geom.data {
+            Some(d) => d,
+            None => continue,
+        };
+        let attrs = match &data_obj.attributes {
+            Some(a) => a,
+            None => continue,
+        };
 
-            let positions: Vec<f32> = match attrs
-                .get("position")
-                .and_then(|p| p.get("array"))
-                .and_then(|a| a.as_array())
-            {
-                Some(arr) => arr
-                    .iter()
-                    .filter_map(|v| v.as_f64().map(|f| f as f32))
-                    .collect(),
-                None => continue,
-            };
+        let positions = match &attrs.position {
+            Some(p) => &p.array,
+            None => continue,
+        };
 
-            let normals: Vec<f32> = attrs
-                .get("normal")
-                .and_then(|n| n.get("array"))
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                        .collect()
-                })
-                .unwrap_or_default();
+        let normals: &[f32] = attrs
+            .normal
+            .as_ref()
+            .map(|n| n.array.as_slice())
+            .unwrap_or(&[]);
 
-            let indices: Option<Vec<u32>> = data_obj
-                .get("index")
-                .and_then(|idx| idx.get("array"))
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_u64().map(|i| i as u32))
-                        .collect()
-                });
+        let indices: Option<&[u32]> = data_obj
+            .index
+            .as_ref()
+            .map(|idx| idx.array.as_slice());
 
-            build_triangles_from_buffers(
-                &positions,
-                &normals,
-                indices.as_deref(),
-                &mut triangles,
-                &mut min,
-                &mut max,
-            );
-        }
+        build_triangles_from_buffers(
+            positions,
+            normals,
+            indices,
+            &mut triangles,
+            &mut min,
+            &mut max,
+        );
     }
 
     // ── Legacy Three.js Geometry format (top-level vertices / faces) ─────
-    if triangles.is_empty() {
-        if let (Some(verts_arr), Some(faces_arr)) = (
-            json.get("vertices").and_then(|v| v.as_array()),
-            json.get("faces").and_then(|f| f.as_array()),
-        ) {
-            let vertices: Vec<f32> = verts_arr
-                .iter()
-                .filter_map(|v| v.as_f64().map(|f| f as f32))
-                .collect();
-            let normals_flat: Vec<f32> = json
-                .get("normals")
-                .and_then(|n| n.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let faces: Vec<i64> = faces_arr
-                .iter()
-                .filter_map(|v| v.as_i64())
-                .collect();
-            let num_uv_layers = json
-                .get("uvs")
-                .and_then(|u| u.as_array())
-                .map(|arr| arr.len())
-                .unwrap_or(0);
+    if triangles.is_empty() && !tjs.vertices.is_empty() && !tjs.faces.is_empty() {
+        let num_uv_layers = tjs.uvs.len();
 
-            parse_legacy_faces(
-                &vertices,
-                &normals_flat,
-                &faces,
-                num_uv_layers,
-                &mut triangles,
-                &mut min,
-                &mut max,
-            );
-        }
+        parse_legacy_faces(
+            &tjs.vertices,
+            &tjs.normals,
+            &tjs.faces,
+            num_uv_layers,
+            &mut triangles,
+            &mut min,
+            &mut max,
+        );
     }
+
+    // Free the parsed JSON data now that triangles are built
+    drop(tjs);
 
     if triangles.is_empty() {
         return Err("No triangles found in TJS/JSON file".into());

@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use image::{ImageBuffer, Rgba};
-
 use crate::math::{transform_point, Mat4, Triangle, Vec3};
 
 // ── Edge key for adjacency detection ────────────────────────────────────────
@@ -44,11 +42,12 @@ pub fn render(
     outline: bool,
     brightness: f32,
     outline_thickness: f32,
-) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
-    let mut color_buf = vec![[0u8, 0, 0, 0]; w * h]; // transparent bg
-    let mut depth_buf = vec![f32::INFINITY; w * h];
+    let pixel_count = w * h;
+    let mut color_buf = vec![0u8; pixel_count * 4]; // RGBA, transparent bg
+    let mut depth_buf = vec![f32::INFINITY; pixel_count];
 
     let light_dir = Vec3::new(0.3, 0.8, 0.5).normalize();
     let light_dir2 = Vec3::new(-0.5, 0.3, -0.8).normalize();
@@ -156,7 +155,11 @@ pub fn render(
                     let idx = py as usize * w + px as usize;
                     if depth < depth_buf[idx] {
                         depth_buf[idx] = depth;
-                        color_buf[idx] = [r, g, b, 255];
+                        let base = idx * 4;
+                        color_buf[base] = r;
+                        color_buf[base + 1] = g;
+                        color_buf[base + 2] = b;
+                        color_buf[base + 3] = 255;
                     }
                 }
             }
@@ -183,15 +186,11 @@ pub fn render(
         }
     }
 
-    let mut img = ImageBuffer::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y as usize * w + x as usize;
-            let [r, g, b, a] = color_buf[idx];
-            img.put_pixel(x, y, Rgba([r, g, b, a]));
-        }
-    }
-    img
+    // Free rasterization buffers before returning
+    drop(depth_buf);
+    drop(edge_map);
+
+    color_buf
 }
 
 /// Depth-tested line drawing for outline edges (black, opaque).
@@ -199,7 +198,7 @@ pub fn render(
 /// so edges hidden behind the model are not visible.
 /// `thickness` controls the line width in pixels.
 fn draw_line(
-    buf: &mut [[u8; 4]],
+    buf: &mut [u8],
     depth_buf: &[f32],
     w: usize,
     h: usize,
@@ -238,7 +237,11 @@ fn draw_line(
                 if px >= 0 && (px as usize) < w && py >= 0 && (py as usize) < h {
                     let idx = py as usize * w + px as usize;
                     if z + depth_bias <= depth_buf[idx] {
-                        buf[idx] = [0, 0, 0, 255];
+                        let base = idx * 4;
+                        buf[base] = 0;
+                        buf[base + 1] = 0;
+                        buf[base + 2] = 0;
+                        buf[base + 3] = 255;
                     }
                 }
             }
