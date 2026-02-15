@@ -412,12 +412,101 @@ function loadIntoScene(buffer, fileName) {
     merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     merged.computeVertexNormals();
     finishLoad(merged);
+  } else if (ext === 'tjs' || ext === 'json') {
+    // CadQuery Three.js JSON export (legacy format v3)
+    const text = new TextDecoder().decode(buffer);
+    const tjs = JSON.parse(text);
+    const geometry = parseTjsGeometry(tjs);
+    if (!geometry) return;
+    finishLoad(geometry);
   } else {
     // STL (default)
     const geometry = new STLLoader().parse(buffer);
     geometry.computeVertexNormals();
     finishLoad(geometry);
   }
+}
+
+// ── TJS (CadQuery Three.js JSON) parser ─────────────────────────────────────
+function parseTjsGeometry(tjs) {
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const scale = tjs.scale || 1.0;
+
+  const FACE_TYPE_MASK = 0x07;
+  const IS_QUAD = 1;
+
+  let offset = 0;
+  while (offset < tjs.faces.length) {
+    const type = tjs.faces[offset++];
+
+    const isQuad = (type & FACE_TYPE_MASK) === IS_QUAD;
+    const hasMaterial = (type & 0x08) !== 0;
+    const hasUV = (type & 0x10) !== 0;
+    const hasNormal = (type & 0x20) !== 0;
+    const hasColor = (type & 0x40) !== 0;
+
+    let faceVerts = [];
+    if (isQuad) {
+      faceVerts = [
+        tjs.faces[offset++], tjs.faces[offset++],
+        tjs.faces[offset++], tjs.faces[offset++],
+      ];
+      [[0, 1, 2], [0, 2, 3]].forEach((tri) => {
+        tri.forEach((vi) => {
+          const idx = faceVerts[vi];
+          positions.push(
+            tjs.vertices[idx * 3 + 0] * scale,
+            tjs.vertices[idx * 3 + 1] * scale,
+            tjs.vertices[idx * 3 + 2] * scale,
+          );
+          if (tjs.normals.length > 0 && hasNormal) {
+            normals.push(tjs.normals[idx * 3], tjs.normals[idx * 3 + 1], tjs.normals[idx * 3 + 2]);
+          }
+          if (tjs.uvs.length > 0 && tjs.uvs[0].length > 0 && hasUV) {
+            uvs.push(tjs.uvs[0][idx * 2], tjs.uvs[0][idx * 2 + 1]);
+          }
+        });
+      });
+    } else {
+      faceVerts = [tjs.faces[offset++], tjs.faces[offset++], tjs.faces[offset++]];
+      [0, 1, 2].forEach((vi) => {
+        const idx = faceVerts[vi];
+        positions.push(
+          tjs.vertices[idx * 3 + 0] * scale,
+          tjs.vertices[idx * 3 + 1] * scale,
+          tjs.vertices[idx * 3 + 2] * scale,
+        );
+        if (tjs.normals.length > 0 && hasNormal) {
+          normals.push(tjs.normals[idx * 3], tjs.normals[idx * 3 + 1], tjs.normals[idx * 3 + 2]);
+        }
+        if (tjs.uvs.length > 0 && tjs.uvs[0].length > 0 && hasUV) {
+          uvs.push(tjs.uvs[0][idx * 2], tjs.uvs[0][idx * 2 + 1]);
+        }
+      });
+    }
+
+    // Skip optional trailing data
+    if (hasMaterial) offset++;
+    if (hasUV) offset += isQuad ? 4 : 3;
+    if (hasNormal) offset += isQuad ? 4 : 3;
+    if (hasColor) offset += isQuad ? 4 : 3;
+  }
+
+  if (positions.length === 0) return null;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  if (normals.length > 0) {
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  } else {
+    geometry.computeVertexNormals();
+  }
+  if (uvs.length > 0) {
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  }
+  return geometry;
 }
 
 function finishLoad(geometry) {

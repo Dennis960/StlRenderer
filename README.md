@@ -2,7 +2,7 @@
 
 Dockerised microservice that renders 3D model files to PNG images using a Rust software rasterizer. Includes a Three.js live-preview frontend.
 
-**Supported formats:** STL (binary & ASCII), GLB/glTF, OBJ
+**Supported formats:** STL (binary & ASCII), GLB/glTF, OBJ, TJS (CadQuery Three.js JSON)
 
 Live demo at [https://stlrenderer.dennis960.com](https://stlrenderer.dennis960.com).
 
@@ -44,7 +44,7 @@ Returns `{"status":"ok"}`.
 
 ### `POST /render`
 
-Upload a 3D model (STL, GLB, glTF, or OBJ) as multipart form data, receive a PNG.
+Upload a 3D model (STL, GLB, glTF, OBJ, or TJS) as multipart form data, receive a PNG.
 
 **Query parameters:**
 
@@ -74,4 +74,8 @@ curl -X POST "http://localhost:8080/render?width=800&height=600" \
 # OBJ
 curl -X POST "http://localhost:8080/render?width=800&height=600&color=cc8844" \
   -F "file=@model.obj" -o render.png
+
+# TJS (CadQuery Three.js JSON)
+curl -X POST "http://localhost:8080/render?width=800&height=600" \
+  -F "file=@model.json" -o render.png
 ```

@@ -83,10 +83,18 @@ pub async fn render_endpoint(
                     .json(serde_json::json!({"error": format!("Multipart error: {}", e)}));
             }
         };
+        // Only read data from file fields (those with a filename); skip text form fields
+        let is_file_field = field
+            .content_disposition()
+            .and_then(|cd| cd.get_filename().map(|f| f.to_string()))
+            .is_some();
         if let Some(cd) = field.content_disposition() {
             if let Some(fname) = cd.get_filename() {
                 filename = fname.to_string();
             }
+        }
+        if !is_file_field {
+            continue;
         }
         while let Some(chunk) = field.next().await {
             match chunk {
