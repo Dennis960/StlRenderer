@@ -16,6 +16,7 @@ let projection = 'perspective';
 let previewDirty = true;
 let outlineEnabled = false;
 let lightBrightness = 1.0;
+let outlineThickness = 1.0;
 
 // ===================================================================
 //  MAIN VIEWPORT — orbit controls, free exploration
@@ -114,12 +115,13 @@ function updatePreviewCamera() {
   const aspect = w / h;
   const { cx, cy, cz, halfX, halfY, halfZ } = aabb;
 
-  // Scale preview canvas to fit max 280px
+  // Scale preview canvas to fit max 280px display size,
+  // but render at full target resolution so outlines are correctly proportioned.
   const maxPx = 280;
   const scale = Math.min(maxPx / w, maxPx / h, 1);
   const pw = Math.max(1, Math.round(w * scale));
   const ph = Math.max(1, Math.round(h * scale));
-  previewRenderer.setSize(pw, ph);
+  previewRenderer.setSize(w, h, false);
   previewCanvas.style.width = pw + 'px';
   previewCanvas.style.height = ph + 'px';
 
@@ -307,7 +309,17 @@ $('outlineToggle').addEventListener('change', e => {
   markDirty();
 });
 
+$('outlineThickness').addEventListener('input', e => {
+  outlineThickness = parseFloat(e.target.value);
+  $('outlineThicknessValue').textContent = outlineThickness.toFixed(1);
+  if (outlineEnabled && currentMesh) {
+    applyOutlineToModel(currentMesh);
+  }
+  markDirty();
+});
+
 function applyOutlineToModel(model) {
+  removeOutlineFromModel(model);
   model.traverse((child) => {
     if (child.isMesh) {
       const mesh = child;
@@ -315,7 +327,7 @@ function applyOutlineToModel(model) {
       const edges = new THREE.EdgesGeometry(geometry);
       const outline = new THREE.LineSegments(
         edges,
-        new THREE.LineBasicMaterial({ color: 0x000000 }),
+        new THREE.LineBasicMaterial({ color: 0x000000, linewidth: outlineThickness }),
       );
       outline.userData.isOutline = true;
       mesh.add(outline);
@@ -356,6 +368,9 @@ $('resetBtn').addEventListener('click', () => {
   $('colorHex').textContent = '#8ca0c8';
   $('outlineToggle').checked = false;
   outlineEnabled = false;
+  $('outlineThickness').value = '1';
+  $('outlineThicknessValue').textContent = '1.0';
+  outlineThickness = 1.0;
   $('brightness').value = '1';
   $('brightnessValue').textContent = '1.00';
   applyBrightness(1.0);
@@ -646,6 +661,7 @@ function updateCurl() {
     padding:    $('padding').value,
     outline:    outlineEnabled,
     brightness: parseFloat($('brightness').value),
+    outline_thickness: outlineThickness,
   });
   $('curlPreview').textContent =
     `curl -X POST "${location.origin}/render?${p}" \\\n  -F "file=@${modelFile.name}" \\\n  -o render.png`;
@@ -672,6 +688,7 @@ async function doRender() {
     padding:    $('padding').value,
     outline:    outlineEnabled,
     brightness: parseFloat($('brightness').value),
+    outline_thickness: outlineThickness,
   });
 
   const form = new FormData();

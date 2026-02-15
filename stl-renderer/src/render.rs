@@ -43,6 +43,7 @@ pub fn render(
     color: [f32; 3],
     outline: bool,
     brightness: f32,
+    outline_thickness: f32,
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
     let w = width as usize;
     let h = height as usize;
@@ -177,7 +178,7 @@ pub fn render(
                 n0.dot(n1) <= threshold_cos
             };
             if draw {
-                draw_line(&mut color_buf, &depth_buf, w, h, info.screen[0], info.screen[1]);
+                draw_line(&mut color_buf, &depth_buf, w, h, info.screen[0], info.screen[1], outline_thickness);
             }
         }
     }
@@ -196,6 +197,7 @@ pub fn render(
 /// Depth-tested line drawing for outline edges (black, opaque).
 /// Only draws pixels that are at or in front of the existing depth buffer,
 /// so edges hidden behind the model are not visible.
+/// `thickness` controls the line width in pixels.
 fn draw_line(
     buf: &mut [[u8; 4]],
     depth_buf: &[f32],
@@ -203,6 +205,7 @@ fn draw_line(
     h: usize,
     a: (f32, f32, f32),
     b: (f32, f32, f32),
+    thickness: f32,
 ) {
     let dx = (b.0 - a.0).abs();
     let dy = (b.1 - a.1).abs();
@@ -214,16 +217,30 @@ fn draw_line(
     let xi = (b.0 - a.0) * inv;
     let yi = (b.1 - a.1) * inv;
     let zi = (b.2 - a.2) * inv;
-    let (mut x, mut y, mut z) = (a.0, a.1, a.2);
     // Small bias so the edge isn't z-fighting with the surface it sits on.
     let depth_bias: f32 = -0.0005;
+    let radius = (thickness - 1.0).max(0.0) / 2.0;
+    let ri = radius.ceil() as i32;
+    let r2 = radius * radius;
+
+    let (mut x, mut y, mut z) = (a.0, a.1, a.2);
     for _ in 0..=steps {
-        let px = x.round() as i32;
-        let py = y.round() as i32;
-        if px >= 0 && (px as usize) < w && py >= 0 && (py as usize) < h {
-            let idx = py as usize * w + px as usize;
-            if z + depth_bias <= depth_buf[idx] {
-                buf[idx] = [0, 0, 0, 255];
+        let cx = x.round() as i32;
+        let cy = y.round() as i32;
+        // For thickness <= 1, draw a single pixel; otherwise fill a circle of the given radius.
+        for oy in -ri..=ri {
+            for ox in -ri..=ri {
+                if ri > 0 && (ox * ox + oy * oy) as f32 > r2 {
+                    continue;
+                }
+                let px = cx + ox;
+                let py = cy + oy;
+                if px >= 0 && (px as usize) < w && py >= 0 && (py as usize) < h {
+                    let idx = py as usize * w + px as usize;
+                    if z + depth_bias <= depth_buf[idx] {
+                        buf[idx] = [0, 0, 0, 255];
+                    }
+                }
             }
         }
         x += xi;

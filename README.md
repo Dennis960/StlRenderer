@@ -48,19 +48,20 @@ Upload a 3D model (STL, GLB, glTF, OBJ, or TJS) as multipart form data, receive 
 
 **Query parameters:**
 
-| Param        | Type   | Default       | Description                                                 |
-| ------------ | ------ | ------------- | ----------------------------------------------------------- |
-| `width`      | int    | 800           | Image width (1–4096)                                        |
-| `height`     | int    | 600           | Image height (1–4096)                                       |
-| `rot_x`      | float  | 0             | Rotate model around X axis (degrees)                        |
-| `rot_y`      | float  | 0             | Rotate model around Y axis (degrees)                        |
-| `rot_z`      | float  | 0             | Rotate model around Z axis (degrees)                        |
-| `fov`        | float  | 45            | Camera field of view (degrees, only for perspective camera) |
-| `projection` | string | "perspective" | Projection type: "perspective" or "orthographic"            |
-| `color`      | string | "#cccccc"     | Model color (hex code)                                      |
-| `padding`    | int    | 10            | Additional padding around the model (pixels)                |
-| `outline`    | bool   | false         | Draw black edge outlines on the model geometry              |
-| `brightness` | float  | 1.0           | Light brightness multiplier (0–3)                           |
+| Param               | Type   | Default       | Description                                                 |
+| ------------------- | ------ | ------------- | ----------------------------------------------------------- |
+| `width`             | int    | 800           | Image width (1–4096)                                        |
+| `height`            | int    | 600           | Image height (1–4096)                                       |
+| `rot_x`             | float  | 0             | Rotate model around X axis (degrees)                        |
+| `rot_y`             | float  | 0             | Rotate model around Y axis (degrees)                        |
+| `rot_z`             | float  | 0             | Rotate model around Z axis (degrees)                        |
+| `fov`               | float  | 45            | Camera field of view (degrees, only for perspective camera) |
+| `projection`        | string | "perspective" | Projection type: "perspective" or "orthographic"            |
+| `color`             | string | "#cccccc"     | Model color (hex code)                                      |
+| `padding`           | int    | 10            | Additional padding around the model (pixels)                |
+| `outline`           | bool   | false         | Draw black edge outlines on the model geometry              |
+| `outline_thickness` | float  | 1.0           | Outline line thickness in pixels (0.5–10)                   |
+| `brightness`        | float  | 1.0           | Light brightness multiplier (0–3)                           |
 
 **Example with curl:**
 
