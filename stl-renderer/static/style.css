@@ -286,18 +286,32 @@ button.reset-btn:hover { background: #30363d; }
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.8);
   z-index: 100;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+.lightbox .lightbox-content {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
 }
 .lightbox.active { display: flex; }
 .lightbox img {
   max-width: 90vw;
   max-height: 90vh;
   border-radius: 6px;
-  box-shadow: 0 8px 40px rgba(0,0,0,.6);
+  background-image:
+    linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-color: #1a1a1a;
+  border: 1px solid #30363d;
 }
 .lightbox .close-hint {
   position: absolute;
