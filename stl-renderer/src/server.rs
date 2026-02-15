@@ -241,7 +241,7 @@ pub async fn render_endpoint(
         transformed.len()
     );
 
-    let img = web::block(move || render(&transformed, &mvp, eye, width, height, color, outline))
+    let img = web::block(move || render(&transformed, &mvp, eye, cam_target, is_ortho, width, height, color, outline))
         .await
         .unwrap();
 

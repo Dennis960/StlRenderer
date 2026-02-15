@@ -36,6 +36,8 @@ pub fn render(
     triangles: &[Triangle],
     mvp: &Mat4,
     eye: Vec3,
+    cam_target: Vec3,
+    is_ortho: bool,
     width: u32,
     height: u32,
     color: [f32; 3],
@@ -48,6 +50,10 @@ pub fn render(
 
     let light_dir = Vec3::new(0.3, 0.8, 0.5).normalize();
     let light_dir2 = Vec3::new(-0.5, 0.3, -0.8).normalize();
+
+    // For orthographic projection the view rays are parallel, so use a
+    // constant view direction (from target toward eye) for back-face culling.
+    let ortho_view_dir = eye.sub(cam_target).normalize();
 
     // Edge adjacency map – only populated when outline is requested.
     let mut edge_map: HashMap<((i64, i64, i64), (i64, i64, i64)), EdgeInfo> = HashMap::new();
@@ -77,8 +83,13 @@ pub fn render(
         let edge2 = tri.v2.sub(tri.v0);
         let face_normal = edge1.cross(edge2).normalize();
 
-        // Back-face culling
-        let view_dir = eye.sub(tri.v0).normalize();
+        // Back-face culling – use a constant direction for orthographic
+        // (parallel rays) vs per-vertex direction for perspective.
+        let view_dir = if is_ortho {
+            ortho_view_dir
+        } else {
+            eye.sub(tri.v0).normalize()
+        };
         if face_normal.dot(view_dir) < 0.0 {
             continue;
         }
