@@ -1,5 +1,5 @@
 use actix_multipart::Multipart;
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::StreamExt;
 use image::ImageEncoder;
 use serde::Deserialize;
@@ -26,8 +26,6 @@ pub struct RenderParams {
     fov: f32,
     #[serde(default = "default_projection")]
     projection: String,
-    #[serde(default = "default_color")]
-    color: String,
     #[serde(default = "default_padding")]
     padding: u32,
     #[serde(default)]
@@ -59,36 +57,66 @@ fn default_projection() -> String {
     "perspective".to_string()
 }
 fn default_color() -> String {
-    "8ca0c8".to_string()
+    "cccccc".to_string()
 }
 fn default_padding() -> u32 {
     10
 }
 
-fn parse_hex_color(hex: &str) -> [f32; 3] {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() == 6 {
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            u8::from_str_radix(&hex[0..2], 16),
-            u8::from_str_radix(&hex[2..4], 16),
-            u8::from_str_radix(&hex[4..6], 16),
-        ) {
-            return [r as f32, g as f32, b as f32];
-        }
+fn normalize_hex(mut hex: &str) -> &str {
+    hex = hex.trim();
+    if let Some(stripped) = hex.strip_prefix("%23") {
+        hex = stripped;
     }
-    [140.0, 160.0, 200.0]
+    if let Some(stripped) = hex.strip_prefix('#') {
+        hex = stripped;
+    }
+    hex
+}
+
+fn parse_hex_triplet(hex: &str) -> Option<[f32; 3]> {
+    if hex.len() != 6 {
+        return None;
+    }
+    if let (Ok(r), Ok(g), Ok(b)) = (
+        u8::from_str_radix(&hex[0..2], 16),
+        u8::from_str_radix(&hex[2..4], 16),
+        u8::from_str_radix(&hex[4..6], 16),
+    ) {
+        Some([r as f32, g as f32, b as f32])
+    } else {
+        None
+    }
+}
+
+fn parse_hex_color(hex: &str) -> [f32; 3] {
+    // Try the provided color first (supports raw, '#', and '%23' forms).
+    let hex = normalize_hex(hex);
+    if let Some(rgb) = parse_hex_triplet(hex) {
+        return rgb;
+    }
+
+    // Fallback to the configured default hex from default_color().
+    let def = default_color();
+    let def_hex = normalize_hex(&def);
+    if let Some(rgb) = parse_hex_triplet(def_hex) {
+        return rgb;
+    }
+
+    // Final hard-coded fallback, should never be hit in normal use.
+    [204.0, 204.0, 204.0]
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 #[actix_web::post("/render")]
 pub async fn render_endpoint(
+    req: HttpRequest,
     query: web::Query<RenderParams>,
     mut payload: Multipart,
 ) -> HttpResponse {
-    // Read the uploaded file and its filename
-    let mut file_data: Vec<u8> = Vec::new();
-    let mut filename = String::from("model.stl");
+    // Collect all uploaded file fields in order.
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     while let Some(item) = payload.next().await {
         let mut field = match item {
             Ok(f) => f,
@@ -97,19 +125,21 @@ pub async fn render_endpoint(
                     .json(serde_json::json!({"error": format!("Multipart error: {}", e)}));
             }
         };
-        // Only read data from file fields (those with a filename); skip text form fields
-        let is_file_field = field
+
+        // Only process fields that carry a filename (i.e. file inputs).
+        let filename = match field
             .content_disposition()
             .and_then(|cd| cd.get_filename().map(|f| f.to_string()))
-            .is_some();
-        if let Some(cd) = field.content_disposition() {
-            if let Some(fname) = cd.get_filename() {
-                filename = fname.to_string();
+        {
+            Some(name) => name,
+            None => {
+                // Drain non-file fields to avoid stalling the multipart stream.
+                while field.next().await.is_some() {}
+                continue;
             }
-        }
-        if !is_file_field {
-            continue;
-        }
+        };
+
+        let mut file_data: Vec<u8> = Vec::new();
         while let Some(chunk) = field.next().await {
             match chunk {
                 Ok(data) => file_data.extend_from_slice(&data),
@@ -119,63 +149,115 @@ pub async fn render_endpoint(
                 }
             }
         }
+        files.push((filename, file_data));
     }
 
-    if file_data.is_empty() {
+    if files.is_empty() {
         return HttpResponse::BadRequest()
             .json(serde_json::json!({"error": "No file uploaded"}));
     }
-
-    let (mut triangles, mesh_min, mesh_max) = match parse_model(&file_data, &filename) {
-        Ok(m) => m,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": format!("Parse error: {}", e)}));
-        }
-    };
-
-    // Free uploaded file data immediately — no longer needed after parsing
-    drop(file_data);
 
     let params = query.into_inner();
     let width = params.width.clamp(1, 4096);
     let height = params.height.clamp(1, 4096);
 
-    // Center mesh at origin
+    // Extract all `color` query parameters in the order they appear.
+    // Example: `?color=ff0000&color=00ff00`. If no colors are provided
+    // at all, fall back to a built-in default. If fewer colors than
+    // models are provided, reuse the last color.
+    let mut raw_colors: Vec<String> = Vec::new();
+    if let Some(qs) = req.uri().query() {
+        for pair in qs.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next().unwrap_or("");
+            if key != "color" {
+                continue;
+            }
+            let value = parts.next().unwrap_or("");
+            raw_colors.push(value.to_string());
+        }
+    }
+
+    let fallback_color = raw_colors
+        .last()
+        .map(|c| parse_hex_color(c))
+        .unwrap_or_else(|| parse_hex_color(&default_color()));
+    let color_list: Vec<[f32; 3]> = raw_colors
+        .iter()
+        .map(|c| parse_hex_color(c))
+        .collect();
+
+    // Parse every uploaded file and accumulate a combined bounding box.
+    let mut model_groups: Vec<(Vec<Triangle>, [f32; 3])> = Vec::new();
+    let mut combined_min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+    let mut combined_max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+
+    for (i, (filename, data)) in files.iter().enumerate() {
+        let (triangles, mesh_min, mesh_max) = match parse_model(data, filename) {
+            Ok(m) => m,
+            Err(e) => {
+                return HttpResponse::BadRequest()
+                    .json(serde_json::json!({"error": format!("Parse error in '{}': {}", filename, e)}));
+            }
+        };
+
+        combined_min.x = combined_min.x.min(mesh_min.x);
+        combined_min.y = combined_min.y.min(mesh_min.y);
+        combined_min.z = combined_min.z.min(mesh_min.z);
+        combined_max.x = combined_max.x.max(mesh_max.x);
+        combined_max.y = combined_max.y.max(mesh_max.y);
+        combined_max.z = combined_max.z.max(mesh_max.z);
+
+        let color = color_list.get(i).copied().unwrap_or(fallback_color);
+        model_groups.push((triangles, color));
+    }
+
+    // Free uploaded file bytes — no longer needed after parsing.
+    drop(files);
+
+    // Center all models together using the combined bounding box so that their
+    // relative positions are preserved while the group is placed at the origin.
     let center = Vec3::new(
-        (mesh_min.x + mesh_max.x) / 2.0,
-        (mesh_min.y + mesh_max.y) / 2.0,
-        (mesh_min.z + mesh_max.z) / 2.0,
+        (combined_min.x + combined_max.x) / 2.0,
+        (combined_min.y + combined_max.y) / 2.0,
+        (combined_min.z + combined_max.z) / 2.0,
     );
 
-    // Apply Euler rotation (intrinsic XYZ, matching Three.js) — in-place to avoid second allocation
+    // Apply Euler rotation (intrinsic XYZ, matching Three.js) to the whole group.
     let rot_x = params.rot_x.unwrap_or(0.0);
     let rot_y = params.rot_y.unwrap_or(0.0);
     let rot_z = params.rot_z.unwrap_or(0.0);
     let rot = rotation_matrix_xyz(rot_x, rot_y, rot_z);
 
-    for t in &mut triangles {
-        t.v0 = rotate_vec3(&rot, t.v0.sub(center));
-        t.v1 = rotate_vec3(&rot, t.v1.sub(center));
-        t.v2 = rotate_vec3(&rot, t.v2.sub(center));
-        t.normal = rotate_vec3(&rot, t.normal).normalize();
-    }
-
-    // Compute AABB of the rotated mesh (rotation-dependent tight fit)
-    let mut aabb_min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
-    let mut aabb_max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
-    for t in &triangles {
-        for v in [t.v0, t.v1, t.v2] {
-            aabb_min.x = aabb_min.x.min(v.x);
-            aabb_min.y = aabb_min.y.min(v.y);
-            aabb_min.z = aabb_min.z.min(v.z);
-            aabb_max.x = aabb_max.x.max(v.x);
-            aabb_max.y = aabb_max.y.max(v.y);
-            aabb_max.z = aabb_max.z.max(v.z);
+    for (triangles, _) in &mut model_groups {
+        for t in triangles.iter_mut() {
+            t.v0 = rotate_vec3(&rot, t.v0.sub(center));
+            t.v1 = rotate_vec3(&rot, t.v1.sub(center));
+            t.v2 = rotate_vec3(&rot, t.v2.sub(center));
+            t.normal = rotate_vec3(&rot, t.normal).normalize();
         }
     }
 
-    // AABB center — camera will target this point to center the object
+    // Compute AABB of the rotated group (rotation-dependent tight fit).
+    let mut aabb_min = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+    let mut aabb_max = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+    for (triangles, _) in &model_groups {
+        for t in triangles {
+            for v in [t.v0, t.v1, t.v2] {
+                aabb_min.x = aabb_min.x.min(v.x);
+                aabb_min.y = aabb_min.y.min(v.y);
+                aabb_min.z = aabb_min.z.min(v.z);
+                aabb_max.x = aabb_max.x.max(v.x);
+                aabb_max.y = aabb_max.y.max(v.y);
+                aabb_max.z = aabb_max.z.max(v.z);
+            }
+        }
+    }
+
+    // AABB centre — camera will target this point to centre the object.
     let aabb_cx = (aabb_min.x + aabb_max.x) / 2.0;
     let aabb_cy = (aabb_min.y + aabb_max.y) / 2.0;
     let aabb_cz = (aabb_min.z + aabb_max.z) / 2.0;
@@ -188,7 +270,7 @@ pub async fn render_endpoint(
     let aspect = width as f32 / height as f32;
     let is_ortho = params.projection == "orthographic";
 
-    // Auto-fit: AABB-based, accounting for padding and centering
+    // Auto-fit: AABB-based, accounting for padding and centering.
     let (eye, cam_target, proj) = if is_ortho {
         let eff_w = (width as f32 - 2.0 * pad_f).max(1.0);
         let eff_h = (height as f32 - 2.0 * pad_f).max(1.0);
@@ -213,12 +295,14 @@ pub async fn render_endpoint(
         let tan_h = eff_half_fov_h.tan();
         let tan_v = eff_half_fov_v.tan();
         let mut min_dist: f32 = 0.1;
-        for t in &triangles {
-            for v in [t.v0, t.v1, t.v2] {
-                let dz = v.z - aabb_cz;
-                let d_h = dz + (v.x - aabb_cx).abs() / tan_h;
-                let d_v = dz + (v.y - aabb_cy).abs() / tan_v;
-                min_dist = min_dist.max(d_h).max(d_v);
+        for (triangles, _) in &model_groups {
+            for t in triangles {
+                for v in [t.v0, t.v1, t.v2] {
+                    let dz = v.z - aabb_cz;
+                    let d_h = dz + (v.x - aabb_cx).abs() / tan_h;
+                    let d_v = dz + (v.y - aabb_cy).abs() / tan_v;
+                    min_dist = min_dist.max(d_h).max(d_v);
+                }
             }
         }
         let dist = min_dist.max(half_z + 0.1);
@@ -235,29 +319,29 @@ pub async fn render_endpoint(
     let view = look_at(eye, cam_target, up);
 
     let mvp = mat4_mul(&proj, &view);
-    let color = parse_hex_color(&params.color);
 
     let outline = params.outline;
     let brightness = params.brightness.clamp(0.0, 5.0);
     let outline_thickness = params.outline_thickness.clamp(0.5, 10.0);
 
+    let total_triangles: usize = model_groups.iter().map(|(t, _)| t.len()).sum();
     log::info!(
-        "Rendering: {}x{}, rot=({:.1},{:.1},{:.1}), proj={}, color={}, pad={}, outline={}, brightness={:.2}, outline_thickness={:.1}, {} triangles",
+        "Rendering: {}x{}, models={}, rot=({:.1},{:.1},{:.1}), proj={}, pad={}, outline={}, brightness={:.2}, outline_thickness={:.1}, {} triangles total",
         width,
         height,
+        model_groups.len(),
         rot_x,
         rot_y,
         rot_z,
         params.projection,
-        params.color,
         padding,
         outline,
         brightness,
         outline_thickness,
-        triangles.len()
+        total_triangles,
     );
 
-    let pixel_data = web::block(move || render(&triangles, &mvp, eye, cam_target, is_ortho, width, height, color, outline, brightness, outline_thickness))
+    let pixel_data = web::block(move || render(model_groups, mvp, eye, cam_target, is_ortho, width, height, outline, brightness, outline_thickness))
         .await
         .unwrap();
 
@@ -273,7 +357,7 @@ pub async fn render_endpoint(
             )
             .unwrap();
     }
-    // Free raw pixel data immediately after PNG encoding
+    // Free raw pixel data immediately after PNG encoding.
     drop(pixel_data);
 
     HttpResponse::Ok()
