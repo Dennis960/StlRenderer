@@ -22,7 +22,7 @@ let outlineEnabled = false;
 let lightBrightness = 1.0;
 let outlineThickness = 1.0;
 
-/** Default colour palette for multi-model uploads. */
+/** Default color palette for multi-model uploads. */
 const DEFAULT_COLORS = ['#8ca0c8', '#c88a8a', '#8ac88a', '#c8c88a', '#8ac8c8', '#c88ac8'];
 
 // ===================================================================
@@ -552,7 +552,7 @@ function setupInScene(files, geometries) {
   const cy = (minY + maxY) / 2;
   const cz = (minZ + maxZ) / 2;
 
-  // Shift all geometries so the combined centre sits at the origin
+  // Shift all geometries so the combined center sits at the origin
   geometries.forEach(geom => geom.translate(-cx, -cy, -cz));
 
   currentGroup = new THREE.Group();

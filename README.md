@@ -63,8 +63,8 @@ Upload one or more 3D models (STL, GLB, glTF, OBJ, or TJS) as multipart form dat
 | `rot_z`             | float  | 0             | Rotate the whole scene around Z axis (degrees)                                   |
 | `fov`               | float  | 45            | Camera field of view (degrees, only for perspective camera)                      |
 | `projection`        | string | "perspective" | Projection type: "perspective" or "orthographic"                                 |
-| `colors`            | string | —             | Comma-separated hex colours, one per uploaded model (e.g. `ff0000,00ff00,0000ff`). Takes precedence over `color`. |
-| `color`             | string | "#cccccc"     | Fallback colour used for any model not covered by `colors`                       |
+| `colors`            | string | —             | Comma-separated hex colors, one per uploaded model (e.g. `ff0000,00ff00,0000ff`). Takes precedence over `color`. |
+| `color`             | string | "#cccccc"     | Fallback color used for any model not covered by `colors`                       |
 | `padding`           | int    | 10            | Additional padding around the model (pixels)                                     |
 | `outline`           | bool   | false         | Draw black edge outlines on the model geometry                                   |
 | `outline_thickness` | float  | 1.0           | Outline line thickness in pixels (0.5–10)                                        |
@@ -85,7 +85,7 @@ curl -X POST "http://localhost:8080/render?width=800&height=600" \
 curl -X POST "http://localhost:8080/render?width=800&height=600&color=cc8844" \
   -F "file=@model.obj" -o render.png
 
-# Multiple models, each with its own colour
+# Multiple models, each with its own color
 curl -X POST "http://localhost:8080/render?width=1200&height=500&rot_x=20&rot_y=40&colors=8ca0c8,c8a888,8ac890" \
   -F "file=@examples/cube.stl" \
   -F "file=@examples/sphere.stl" \
