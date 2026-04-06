@@ -8,8 +8,12 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 const $ = id => document.getElementById(id);
 
 // ── State ──────────────────────────────────
-let modelFile = null;
-let currentMesh = null;
+/** All File objects currently loaded (one per uploaded model). */
+let modelFiles = [];
+/** Individual THREE.Mesh objects, one per uploaded model. */
+let loadedMeshes = [];
+/** The THREE.Group that contains all loadedMeshes. Rotation is applied to this. */
+let currentGroup = null;
 let gizmo = null;
 let aabb = { cx: 0, cy: 0, cz: 0, halfX: 1, halfY: 1, halfZ: 1 };
 let projection = 'perspective';
@@ -17,6 +21,9 @@ let previewDirty = true;
 let outlineEnabled = false;
 let lightBrightness = 1.0;
 let outlineThickness = 1.0;
+
+/** Default colour palette for multi-model uploads. */
+const DEFAULT_COLORS = ['#8ca0c8', '#c88a8a', '#8ac88a', '#c8c88a', '#8ac8c8', '#c88ac8'];
 
 // ===================================================================
 //  MAIN VIEWPORT — orbit controls, free exploration
@@ -81,21 +88,23 @@ function getPreviewCamera() {
   return projection === 'perspective' ? previewPerspCam : previewOrthoCam;
 }
 
-// Compute AABB from the current mesh + rotation (rotation-dependent tight fit)
+// Compute AABB from all loaded meshes + the group's rotation (tight fit)
 function computeAABB() {
-  if (!currentMesh) return;
-  const pos = currentMesh.geometry.attributes.position;
-  const q = currentMesh.quaternion;
+  if (!currentGroup || loadedMeshes.length === 0) return;
+  const q = currentGroup.quaternion;
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
   const v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    v.applyQuaternion(q);
-    minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
-    minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
-    minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z);
+  for (const mesh of loadedMeshes) {
+    const pos = mesh.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      v.applyQuaternion(q);
+      minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+      minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
+      minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z);
+    }
   }
   aabb = {
     cx: (minX + maxX) / 2,
@@ -135,17 +144,19 @@ function updatePreviewCamera() {
     const tanH = Math.tan(effHalfFovH);
     const tanV = Math.tan(effHalfFovV);
 
-    // Per-vertex perspective fit
+    // Per-vertex perspective fit across all loaded meshes
     let dist = 0.1;
-    if (currentMesh) {
-      const pos = currentMesh.geometry.attributes.position;
-      const q = currentMesh.quaternion;
+    if (currentGroup && loadedMeshes.length > 0) {
+      const q = currentGroup.quaternion;
       const v = new THREE.Vector3();
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        v.applyQuaternion(q);
-        const dz = v.z - cz;
-        dist = Math.max(dist, dz + Math.abs(v.x - cx) / tanH, dz + Math.abs(v.y - cy) / tanV);
+      for (const mesh of loadedMeshes) {
+        const pos = mesh.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i);
+          v.applyQuaternion(q);
+          const dz = v.z - cz;
+          dist = Math.max(dist, dz + Math.abs(v.x - cx) / tanH, dz + Math.abs(v.y - cy) / tanV);
+        }
       }
     }
     dist = Math.max(dist, halfZ + 0.1);
@@ -185,7 +196,7 @@ function updatePreviewCamera() {
 }
 
 function renderPreview() {
-  if (!currentMesh) return;
+  if (!currentGroup) return;
   // Hide gizmo and grid for clean preview
   const gizmoHelper = gizmo ? gizmo.getHelper() : null;
   if (gizmoHelper) gizmoHelper.visible = false;
@@ -205,11 +216,11 @@ function recreateGizmo() {
     gizmo.dispose();
     gizmo = null;
   }
-  if (!currentMesh) return;
+  if (!currentGroup) return;
   gizmo = new TransformControls(mainCamera, mainRenderer.domElement);
   gizmo.setMode('rotate');
   gizmo.setSize(1.2);
-  gizmo.attach(currentMesh);
+  gizmo.attach(currentGroup);
   scene.add(gizmo.getHelper());
   gizmo.addEventListener('objectChange', syncFieldsFromObject);
   gizmo.addEventListener('dragging-changed', e => {
@@ -252,8 +263,8 @@ function markDirty() {
 
 // ── Sync: object rotation → input fields ──
 function syncFieldsFromObject() {
-  if (!currentMesh) return;
-  const r = currentMesh.rotation;
+  if (!currentGroup) return;
+  const r = currentGroup.rotation;
   $('rotX').value = THREE.MathUtils.radToDeg(r.x).toFixed(1);
   $('rotY').value = THREE.MathUtils.radToDeg(r.y).toFixed(1);
   $('rotZ').value = THREE.MathUtils.radToDeg(r.z).toFixed(1);
@@ -262,8 +273,8 @@ function syncFieldsFromObject() {
 
 // ── Sync: input fields → object ──
 function syncObjectFromFields() {
-  if (!currentMesh) return;
-  currentMesh.rotation.set(
+  if (!currentGroup) return;
+  currentGroup.rotation.set(
     THREE.MathUtils.degToRad(parseFloat($('rotX').value) || 0),
     THREE.MathUtils.degToRad(parseFloat($('rotY').value) || 0),
     THREE.MathUtils.degToRad(parseFloat($('rotZ').value) || 0),
@@ -299,11 +310,11 @@ $('brightness').addEventListener('input', e => {
 // ── Outline toggle ─────────────────────────
 $('outlineToggle').addEventListener('change', e => {
   outlineEnabled = e.target.checked;
-  if (currentMesh) {
+  if (currentGroup) {
     if (outlineEnabled) {
-      applyOutlineToModel(currentMesh);
+      applyOutlineToModel(currentGroup);
     } else {
-      removeOutlineFromModel(currentMesh);
+      removeOutlineFromModel(currentGroup);
     }
   }
   markDirty();
@@ -312,8 +323,8 @@ $('outlineToggle').addEventListener('change', e => {
 $('outlineThickness').addEventListener('input', e => {
   outlineThickness = parseFloat(e.target.value);
   $('outlineThicknessValue').textContent = outlineThickness.toFixed(1);
-  if (outlineEnabled && currentMesh) {
-    applyOutlineToModel(currentMesh);
+  if (outlineEnabled && currentGroup) {
+    applyOutlineToModel(currentGroup);
   }
   markDirty();
 });
@@ -349,14 +360,6 @@ function removeOutlineFromModel(model) {
   });
 }
 
-// ── Color picker ───────────────────────────
-$('colorPicker').addEventListener('input', e => {
-  const hex = e.target.value;
-  $('colorHex').textContent = hex;
-  if (currentMesh) currentMesh.material.color.set(hex);
-  markDirty();
-});
-
 // ── Reset ──────────────────────────────────
 $('resetBtn').addEventListener('click', () => {
   $('rotX').value = '0';
@@ -364,8 +367,6 @@ $('resetBtn').addEventListener('click', () => {
   $('rotZ').value = '0';
   $('fov').value = '45';
   $('padding').value = '10';
-  $('colorPicker').value = '#8ca0c8';
-  $('colorHex').textContent = '#8ca0c8';
   $('outlineToggle').checked = false;
   outlineEnabled = false;
   $('outlineThickness').value = '1';
@@ -375,10 +376,15 @@ $('resetBtn').addEventListener('click', () => {
   $('brightnessValue').textContent = '1.00';
   applyBrightness(1.0);
   setProjection('perspective');
-  if (currentMesh) {
-    removeOutlineFromModel(currentMesh);
-    currentMesh.rotation.set(0, 0, 0);
-    currentMesh.material.color.set('#8ca0c8');
+  if (currentGroup) {
+    removeOutlineFromModel(currentGroup);
+    currentGroup.rotation.set(0, 0, 0);
+    // Reset each mesh's colour to its default palette entry
+    loadedMeshes.forEach((mesh, i) => {
+      const col = DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+      mesh.material.color.set(col);
+    });
+    renderModelColorsUI();
   }
   mainCamera.position.set(200, 150, 200);
   mainCamera.lookAt(0, 0, 0);
@@ -397,77 +403,95 @@ dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
-  if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
 });
-fileInput.addEventListener('change', () => { if (fileInput.files.length) loadFile(fileInput.files[0]); });
+fileInput.addEventListener('change', () => { if (fileInput.files.length) loadFiles(fileInput.files); });
 
-function loadFile(f) {
-  modelFile = f;
-  $('fileName').textContent = f.name + ' (' + (f.size / 1024).toFixed(0) + ' KB)';
-  $('renderBtn').disabled = false;
-  const reader = new FileReader();
-  reader.onload = ev => loadIntoScene(ev.target.result, f.name);
-  reader.readAsArrayBuffer(f);
+/** Load one or more files, preserving their relative 3D positions. */
+async function loadFiles(fileList) {
+  const files = Array.from(fileList);
+  if (files.length === 0) return;
+
+  // Clear existing scene objects
+  if (gizmo) { gizmo.detach(); scene.remove(gizmo.getHelper()); gizmo.dispose(); gizmo = null; }
+  if (currentGroup) {
+    scene.remove(currentGroup);
+    loadedMeshes.forEach(m => { m.geometry.dispose(); m.material.dispose(); });
+  }
+  loadedMeshes = [];
+  currentGroup = null;
+
+  // Parse all files in parallel, keeping original coordinates (no per-file centering)
+  const geometries = await Promise.all(files.map(f =>
+    new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = ev => resolve(parseFileToGeometry(ev.target.result, f.name));
+      reader.readAsArrayBuffer(f);
+    })
+  ));
+
+  // Keep only successfully parsed models
+  const validPairs = files
+    .map((f, i) => [f, geometries[i]])
+    .filter(([, g]) => g !== null);
+  if (validPairs.length === 0) return;
+
+  setupInScene(validPairs.map(([f]) => f), validPairs.map(([, g]) => g));
 }
 
-function loadIntoScene(buffer, fileName) {
-  if (gizmo) { gizmo.detach(); scene.remove(gizmo.getHelper()); gizmo.dispose(); gizmo = null; }
-  if (currentMesh) { scene.remove(currentMesh); currentMesh.geometry.dispose(); currentMesh.material.dispose(); }
-
+/**
+ * Parse a file buffer into a BufferGeometry WITHOUT centering.
+ * Returns a Promise that resolves to the geometry (or null on error).
+ */
+function parseFileToGeometry(buffer, fileName) {
   const ext = (fileName || '').split('.').pop().toLowerCase();
 
   if (ext === 'glb' || ext === 'gltf') {
-    const loader = new GLTFLoader();
-    const blob = new Blob([buffer]);
-    const url = URL.createObjectURL(blob);
-    loader.load(url, (gltfResult) => {
-      URL.revokeObjectURL(url);
-      // Merge all meshes into one geometry
-      const merged = new THREE.BufferGeometry();
-      const positions = [];
-      const normals = [];
-      gltfResult.scene.updateMatrixWorld(true);
-      gltfResult.scene.traverse((child) => {
-        if (child.isMesh) {
-          const geom = child.geometry.clone();
-          geom.applyMatrix4(child.matrixWorld);
-          const pos = geom.attributes.position;
-          const norm = geom.attributes.normal;
-          if (geom.index) {
-            const idx = geom.index;
-            for (let i = 0; i < idx.count; i++) {
-              const vi = idx.getX(i);
-              positions.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
-              if (norm) normals.push(norm.getX(vi), norm.getY(vi), norm.getZ(vi));
-              else normals.push(0, 0, 0);
+    return new Promise(resolve => {
+      const loader = new GLTFLoader();
+      const blob = new Blob([buffer]);
+      const url = URL.createObjectURL(blob);
+      loader.load(url, gltfResult => {
+        URL.revokeObjectURL(url);
+        const positions = [], normals = [];
+        gltfResult.scene.updateMatrixWorld(true);
+        gltfResult.scene.traverse(child => {
+          if (child.isMesh) {
+            const geom = child.geometry.clone();
+            geom.applyMatrix4(child.matrixWorld);
+            const pos = geom.attributes.position;
+            const norm = geom.attributes.normal;
+            if (geom.index) {
+              const idx = geom.index;
+              for (let i = 0; i < idx.count; i++) {
+                const vi = idx.getX(i);
+                positions.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+                normals.push(norm ? norm.getX(vi) : 0, norm ? norm.getY(vi) : 0, norm ? norm.getZ(vi) : 0);
+              }
+            } else {
+              for (let i = 0; i < pos.count; i++) {
+                positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+                normals.push(norm ? norm.getX(i) : 0, norm ? norm.getY(i) : 0, norm ? norm.getZ(i) : 0);
+              }
             }
-          } else {
-            for (let i = 0; i < pos.count; i++) {
-              positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-              if (norm) normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
-              else normals.push(0, 0, 0);
-            }
+            geom.dispose();
           }
-          geom.dispose();
-        }
-      });
-      if (positions.length === 0) return;
-      merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-      merged.computeVertexNormals();
-      finishLoad(merged);
-    }, undefined, (err) => {
-      console.error('GLB load error', err);
+        });
+        if (positions.length === 0) { resolve(null); return; }
+        const merged = new THREE.BufferGeometry();
+        merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        merged.computeVertexNormals();
+        resolve(merged);
+      }, undefined, () => resolve(null));
     });
-  } else if (ext === 'obj') {
+  }
+
+  if (ext === 'obj') {
     const text = new TextDecoder().decode(buffer);
-    const loader = new OBJLoader();
-    const group = loader.parse(text);
-    // Merge all meshes
-    const merged = new THREE.BufferGeometry();
-    const positions = [];
-    const normals = [];
-    group.traverse((child) => {
+    const group = new OBJLoader().parse(text);
+    const positions = [], normals = [];
+    group.traverse(child => {
       if (child.isMesh) {
         const geom = child.geometry;
         const pos = geom.attributes.position;
@@ -477,35 +501,164 @@ function loadIntoScene(buffer, fileName) {
           for (let i = 0; i < idx.count; i++) {
             const vi = idx.getX(i);
             positions.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
-            if (norm) normals.push(norm.getX(vi), norm.getY(vi), norm.getZ(vi));
-            else normals.push(0, 0, 0);
+            normals.push(norm ? norm.getX(vi) : 0, norm ? norm.getY(vi) : 0, norm ? norm.getZ(vi) : 0);
           }
         } else {
           for (let i = 0; i < pos.count; i++) {
             positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-            if (norm) normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
-            else normals.push(0, 0, 0);
+            normals.push(norm ? norm.getX(i) : 0, norm ? norm.getY(i) : 0, norm ? norm.getZ(i) : 0);
           }
         }
       }
     });
-    if (positions.length === 0) return;
+    if (positions.length === 0) return Promise.resolve(null);
+    const merged = new THREE.BufferGeometry();
     merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     merged.computeVertexNormals();
-    finishLoad(merged);
-  } else if (ext === 'tjs' || ext === 'json') {
-    // CadQuery Three.js JSON export (legacy format v3)
-    const text = new TextDecoder().decode(buffer);
-    const tjs = JSON.parse(text);
-    const geometry = parseTjsGeometry(tjs);
-    if (!geometry) return;
-    finishLoad(geometry);
+    return Promise.resolve(merged);
+  }
+
+  if (ext === 'tjs' || ext === 'json') {
+    const tjs = JSON.parse(new TextDecoder().decode(buffer));
+    return Promise.resolve(parseTjsGeometry(tjs));
+  }
+
+  // Default: STL
+  const geometry = new STLLoader().parse(buffer);
+  geometry.computeVertexNormals();
+  return Promise.resolve(geometry);
+}
+
+/**
+ * Place all parsed geometries in the scene as a single group.
+ * All geometries are shifted by the combined bounding-box centre so their
+ * relative positions are preserved while the whole group is at the origin.
+ */
+function setupInScene(files, geometries) {
+  // Compute combined bounding box (geometries still at their original positions)
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  geometries.forEach(geom => {
+    geom.computeBoundingBox();
+    const b = geom.boundingBox;
+    minX = Math.min(minX, b.min.x); maxX = Math.max(maxX, b.max.x);
+    minY = Math.min(minY, b.min.y); maxY = Math.max(maxY, b.max.y);
+    minZ = Math.min(minZ, b.min.z); maxZ = Math.max(maxZ, b.max.z);
+  });
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  // Shift all geometries so the combined centre sits at the origin
+  geometries.forEach(geom => geom.translate(-cx, -cy, -cz));
+
+  currentGroup = new THREE.Group();
+  modelFiles = files;
+  loadedMeshes = [];
+
+  geometries.forEach((geom, i) => {
+    const color = DEFAULT_COLORS[i % DEFAULT_COLORS.length];
+    const mesh = new THREE.Mesh(geom, new THREE.MeshPhongMaterial({
+      color,
+      specular: 0x222222,
+      shininess: 30,
+      flatShading: true,
+    }));
+    currentGroup.add(mesh);
+    loadedMeshes.push(mesh);
+  });
+
+  scene.add(currentGroup);
+
+  // Apply outline if enabled
+  if (outlineEnabled) applyOutlineToModel(currentGroup);
+
+  // Fit main camera
+  const size = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const near = maxDim * 0.01;
+  const far = maxDim * 10;
+  mainCamera.near = near;
+  mainCamera.far = far;
+  mainCamera.updateProjectionMatrix();
+
+  const d = maxDim * 1.5;
+  mainCamera.position.set(d * 0.7, d * 0.5, d * 0.7);
+  mainCamera.lookAt(0, 0, 0);
+  orbitControls.target.set(0, 0, 0);
+  orbitControls.update();
+  grid.scale.setScalar(maxDim / 200);
+
+  // Update filename display
+  if (files.length === 1) {
+    $('fileName').textContent = files[0].name + ' (' + (files[0].size / 1024).toFixed(0) + ' KB)';
   } else {
-    // STL (default)
-    const geometry = new STLLoader().parse(buffer);
-    geometry.computeVertexNormals();
-    finishLoad(geometry);
+    const totalKB = files.reduce((s, f) => s + f.size, 0) / 1024;
+    $('fileName').textContent = files.length + ' files (' + totalKB.toFixed(0) + ' KB total)';
+  }
+
+  $('renderBtn').disabled = false;
+  $('viewportHint').style.display = 'none';
+  previewOverlay.classList.add('visible');
+
+  renderModelColorsUI();
+  recreateGizmo();
+  syncObjectFromFields();
+  markDirty();
+}
+
+/** Render the per-model colour pickers into #modelColorsList. */
+function renderModelColorsUI() {
+  const container = $('modelColorsList');
+  container.innerHTML = '';
+  loadedMeshes.forEach((mesh, i) => {
+    const hexColor = '#' + mesh.material.color.getHexString();
+    const name = modelFiles[i] ? modelFiles[i].name : ('Model ' + (i + 1));
+    const row = document.createElement('div');
+    row.className = 'color-row';
+
+    const picker = document.createElement('input');
+    picker.type = 'color';
+    picker.value = hexColor;
+    picker.addEventListener('input', e => {
+      mesh.material.color.set(e.target.value);
+      hexSpan.textContent = e.target.value;
+      markDirty();
+    });
+
+    const hexSpan = document.createElement('span');
+    hexSpan.className = 'color-hex';
+    hexSpan.textContent = hexColor;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'model-color-name';
+    nameSpan.title = name;
+    nameSpan.textContent = name;
+
+    row.appendChild(picker);
+    row.appendChild(hexSpan);
+    if (loadedMeshes.length > 1) row.appendChild(nameSpan);
+    container.appendChild(row);
+  });
+
+  // Fallback: if nothing loaded yet, keep a placeholder picker
+  if (loadedMeshes.length === 0) {
+    const row = document.createElement('div');
+    row.className = 'color-row';
+    const picker = document.createElement('input');
+    picker.type = 'color';
+    picker.id = 'colorPicker';
+    picker.value = '#8ca0c8';
+    const hexSpan = document.createElement('span');
+    hexSpan.className = 'color-hex';
+    hexSpan.id = 'colorHex';
+    hexSpan.textContent = '#8ca0c8';
+    row.appendChild(picker);
+    row.appendChild(hexSpan);
+    container.appendChild(row);
   }
 }
 
@@ -591,80 +744,31 @@ function parseTjsGeometry(tjs) {
   return geometry;
 }
 
-function finishLoad(geometry) {
-
-  // Center at origin
-  geometry.computeBoundingBox();
-  const center = new THREE.Vector3();
-  geometry.boundingBox.getCenter(center);
-  geometry.translate(-center.x, -center.y, -center.z);
-  geometry.computeBoundingBox();
-
-  const hexColor = $('colorPicker').value;
-  currentMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
-    color: hexColor,
-    specular: 0x222222,
-    shininess: 30,
-    flatShading: true,
-  }));
-  scene.add(currentMesh);
-
-  // Apply outline if enabled
-  if (outlineEnabled) {
-    applyOutlineToModel(currentMesh);
-  }
-
-  // Compute size
-  const size = new THREE.Vector3();
-  geometry.boundingBox.getSize(size);
-  const maxDim = Math.max(size.x, size.y, size.z);
-
-  // Set near/far for all cameras
-  const near = maxDim * 0.01;
-  const far = maxDim * 10;
-  mainCamera.near = near;
-  mainCamera.far = far;
-  mainCamera.updateProjectionMatrix();
-
-  // Fit main camera nicely
-  const d = maxDim * 1.5;
-  mainCamera.position.set(d * 0.7, d * 0.5, d * 0.7);
-  mainCamera.lookAt(0, 0, 0);
-  orbitControls.target.set(0, 0, 0);
-  orbitControls.update();
-
-  recreateGizmo();
-
-  $('viewportHint').style.display = 'none';
-  previewOverlay.classList.add('visible');
-  grid.scale.setScalar(maxDim / 200);
-
-  syncObjectFromFields();
-  markDirty();
-}
 
 // ── Curl preview ───────────────────────────
 function updateCurl() {
-  if (!modelFile) {
+  if (modelFiles.length === 0) {
     $('curlPreview').textContent = 'Upload a file to see the curl command';
     return;
   }
+  const colors = loadedMeshes.map(m => m.material.color.getHexString()).join(',');
   const p = new URLSearchParams({
-    width:      $('width').value,
-    height:     $('height').value,
-    rot_x:      $('rotX').value,
-    rot_y:      $('rotY').value,
-    rot_z:      $('rotZ').value,
-    fov:        $('fov').value,
-    projection: projection,
-    color:      $('colorPicker').value.replace('#', ''),
-    padding:    $('padding').value,
-    outline:    outlineEnabled,
-    brightness: parseFloat($('brightness').value),
+    width:             $('width').value,
+    height:            $('height').value,
+    rot_x:             $('rotX').value,
+    rot_y:             $('rotY').value,
+    rot_z:             $('rotZ').value,
+    fov:               $('fov').value,
+    projection:        projection,
+    colors,
+    padding:           $('padding').value,
+    outline:           outlineEnabled,
+    brightness:        parseFloat($('brightness').value),
     outline_thickness: outlineThickness,
   });
+  const fileArgs = modelFiles.map(f => `-F "file=@${f.name}"`).join(' \\\n  ');
   $('curlPreview').textContent =
-    `curl -X POST "${location.origin}/render?${p}" \\\n  -F "file=@${modelFile.name}" \\\n  -o render.png`;
+    `curl -X POST "${location.origin}/render?${p}" \\\n  ${fileArgs} \\\n  -o render.png`;
 }
 
 // ── Render PNG ─────────────────────────────
@@ -672,27 +776,28 @@ $('renderBtn').addEventListener('click', doRender);
 let lastBlobUrl = null;
 
 async function doRender() {
-  if (!modelFile) return;
+  if (modelFiles.length === 0) return;
   $('renderBtn').disabled = true;
   $('statusMsg').textContent = 'Rendering…';
 
+  const colors = loadedMeshes.map(m => m.material.color.getHexString()).join(',');
   const params = new URLSearchParams({
-    width:      $('width').value,
-    height:     $('height').value,
-    rot_x:      $('rotX').value,
-    rot_y:      $('rotY').value,
-    rot_z:      $('rotZ').value,
-    fov:        $('fov').value,
-    projection: projection,
-    color:      $('colorPicker').value.replace('#', ''),
-    padding:    $('padding').value,
-    outline:    outlineEnabled,
-    brightness: parseFloat($('brightness').value),
+    width:             $('width').value,
+    height:            $('height').value,
+    rot_x:             $('rotX').value,
+    rot_y:             $('rotY').value,
+    rot_z:             $('rotZ').value,
+    fov:               $('fov').value,
+    projection:        projection,
+    colors,
+    padding:           $('padding').value,
+    outline:           outlineEnabled,
+    brightness:        parseFloat($('brightness').value),
     outline_thickness: outlineThickness,
   });
 
   const form = new FormData();
-  form.append('file', modelFile);
+  modelFiles.forEach(f => form.append('file', f));
 
   const t0 = performance.now();
   try {

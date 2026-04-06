@@ -20,10 +20,10 @@
       <div class="section-title">Model</div>
       <div class="upload-area" id="dropZone">
         <div class="icon">📦</div>
-        <div class="label">Drop model or click to browse</div>
-        <div class="sublabel">STL · GLB/glTF · OBJ · TJS</div>
+        <div class="label">Drop models or click to browse</div>
+        <div class="sublabel">STL · GLB/glTF · OBJ · TJS · Multiple files supported</div>
         <div class="filename" id="fileName"></div>
-        <input type="file" id="fileInput" accept=".stl,.glb,.gltf,.obj,.tjs,.json">
+        <input type="file" id="fileInput" accept=".stl,.glb,.gltf,.obj,.tjs,.json" multiple>
       </div>
     </div>
 
@@ -93,8 +93,9 @@
 
     <!-- Color -->
     <div>
-      <div class="section-title">Object Color</div>
-      <div class="control-group">
+      <div class="section-title">Model Colors</div>
+      <div class="control-group" id="modelColorsList">
+        <!-- Populated dynamically per uploaded model -->
         <div class="color-row">
           <input type="color" id="colorPicker" value="#8ca0c8">
           <span class="color-hex" id="colorHex">#8ca0c8</span>

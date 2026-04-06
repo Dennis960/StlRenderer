@@ -182,6 +182,7 @@ input[type="color"] {
   background: none;
   cursor: pointer;
   padding: 2px;
+  flex-shrink: 0;
 }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
@@ -189,6 +190,15 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
   font-size: .78rem;
   font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
   color: #8b949e;
+  flex-shrink: 0;
+}
+.model-color-name {
+  font-size: .7rem;
+  color: #8b949e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Buttons */

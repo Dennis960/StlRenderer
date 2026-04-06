@@ -30,15 +30,17 @@ struct EdgeInfo {
     normals: Vec<Vec3>,
 }
 
+/// Render multiple model groups, each with its own RGB colour.
+/// Every group is a `(triangles, color)` pair where `color` components
+/// are in the 0–255 range (matching `parse_hex_color` output).
 pub fn render(
-    triangles: &[Triangle],
-    mvp: &Mat4,
+    model_groups: Vec<(Vec<Triangle>, [f32; 3])>,
+    mvp: Mat4,
     eye: Vec3,
     cam_target: Vec3,
     is_ortho: bool,
     width: u32,
     height: u32,
-    color: [f32; 3],
     outline: bool,
     brightness: f32,
     outline_thickness: f32,
@@ -60,106 +62,108 @@ pub fn render(
     // Edge adjacency map – only populated when outline is requested.
     let mut edge_map: HashMap<((i64, i64, i64), (i64, i64, i64)), EdgeInfo> = HashMap::new();
 
-    for tri in triangles {
-        let (x0, y0, z0, w0) = transform_point(mvp, tri.v0);
-        let (x1, y1, z1, w1) = transform_point(mvp, tri.v1);
-        let (x2, y2, z2, w2) = transform_point(mvp, tri.v2);
+    for (triangles, color) in &model_groups {
+        for tri in triangles {
+            let (x0, y0, z0, w0) = transform_point(&mvp, tri.v0);
+            let (x1, y1, z1, w1) = transform_point(&mvp, tri.v1);
+            let (x2, y2, z2, w2) = transform_point(&mvp, tri.v2);
 
-        if w0 <= 0.0 || w1 <= 0.0 || w2 <= 0.0 {
-            continue;
-        }
-
-        let ndc0 = Vec3::new(x0 / w0, y0 / w0, z0 / w0);
-        let ndc1 = Vec3::new(x1 / w1, y1 / w1, z1 / w1);
-        let ndc2 = Vec3::new(x2 / w2, y2 / w2, z2 / w2);
-
-        let sx0 = (ndc0.x + 1.0) * 0.5 * width as f32;
-        let sy0 = (1.0 - ndc0.y) * 0.5 * height as f32;
-        let sx1 = (ndc1.x + 1.0) * 0.5 * width as f32;
-        let sy1 = (1.0 - ndc1.y) * 0.5 * height as f32;
-        let sx2 = (ndc2.x + 1.0) * 0.5 * width as f32;
-        let sy2 = (1.0 - ndc2.y) * 0.5 * height as f32;
-
-        // Face normal from vertices (reliable)
-        let edge1 = tri.v1.sub(tri.v0);
-        let edge2 = tri.v2.sub(tri.v0);
-        let face_normal = edge1.cross(edge2).normalize();
-
-        // Back-face culling – use a constant direction for orthographic
-        // (parallel rays) vs per-vertex direction for perspective.
-        let view_dir = if is_ortho {
-            ortho_view_dir
-        } else {
-            eye.sub(tri.v0).normalize()
-        };
-        if face_normal.dot(view_dir) < 0.0 {
-            continue;
-        }
-
-        // Lighting – brightness scales the directional contribution
-        let ndl1 = face_normal.dot(light_dir).max(0.0);
-        let ndl2 = face_normal.dot(light_dir2).max(0.0);
-        let ambient = 0.15;
-        let intensity = (ambient + (0.55 * ndl1 + 0.35 * ndl2) * brightness).min(1.0);
-
-        let r = (color[0] * intensity).min(255.0) as u8;
-        let g = (color[1] * intensity).min(255.0) as u8;
-        let b = (color[2] * intensity).min(255.0) as u8;
-
-        // Collect edge adjacency info for the outline pass.
-        // Mimics THREE.EdgesGeometry: only hard edges are drawn.
-        if outline {
-            let verts = [(tri.v0, sx0, sy0, ndc0.z), (tri.v1, sx1, sy1, ndc1.z), (tri.v2, sx2, sy2, ndc2.z)];
-            for &(i, j) in &[(0usize, 1usize), (1, 2), (2, 0)] {
-                let (va, sxa, sya, za) = verts[i];
-                let (vb, sxb, syb, zb) = verts[j];
-                let key = edge_key(va, vb);
-                edge_map
-                    .entry(key)
-                    .and_modify(|info| {
-                        info.normals.push(face_normal);
-                    })
-                    .or_insert_with(|| EdgeInfo {
-                        screen: [(sxa, sya, za), (sxb, syb, zb)],
-                        normals: vec![face_normal],
-                    });
+            if w0 <= 0.0 || w1 <= 0.0 || w2 <= 0.0 {
+                continue;
             }
-        }
 
-        // Bounding box
-        let min_x = sx0.min(sx1).min(sx2).floor().max(0.0) as i32;
-        let max_x = sx0.max(sx1).max(sx2).ceil().min(width as f32 - 1.0) as i32;
-        let min_y = sy0.min(sy1).min(sy2).floor().max(0.0) as i32;
-        let max_y = sy0.max(sy1).max(sy2).ceil().min(height as f32 - 1.0) as i32;
+            let ndc0 = Vec3::new(x0 / w0, y0 / w0, z0 / w0);
+            let ndc1 = Vec3::new(x1 / w1, y1 / w1, z1 / w1);
+            let ndc2 = Vec3::new(x2 / w2, y2 / w2, z2 / w2);
 
-        let area = edge_function(sx0, sy0, sx1, sy1, sx2, sy2);
-        if area.abs() < 1e-6 {
-            continue;
-        }
-        let inv_area = 1.0 / area;
+            let sx0 = (ndc0.x + 1.0) * 0.5 * width as f32;
+            let sy0 = (1.0 - ndc0.y) * 0.5 * height as f32;
+            let sx1 = (ndc1.x + 1.0) * 0.5 * width as f32;
+            let sy1 = (1.0 - ndc1.y) * 0.5 * height as f32;
+            let sx2 = (ndc2.x + 1.0) * 0.5 * width as f32;
+            let sy2 = (1.0 - ndc2.y) * 0.5 * height as f32;
 
-        for py in min_y..=max_y {
-            for px in min_x..=max_x {
-                let px_f = px as f32 + 0.5;
-                let py_f = py as f32 + 0.5;
+            // Face normal from vertices (reliable)
+            let edge1 = tri.v1.sub(tri.v0);
+            let edge2 = tri.v2.sub(tri.v0);
+            let face_normal = edge1.cross(edge2).normalize();
 
-                let w0_e = edge_function(sx1, sy1, sx2, sy2, px_f, py_f);
-                let w1_e = edge_function(sx2, sy2, sx0, sy0, px_f, py_f);
-                let w2_e = edge_function(sx0, sy0, sx1, sy1, px_f, py_f);
+            // Back-face culling – use a constant direction for orthographic
+            // (parallel rays) vs per-vertex direction for perspective.
+            let view_dir = if is_ortho {
+                ortho_view_dir
+            } else {
+                eye.sub(tri.v0).normalize()
+            };
+            if face_normal.dot(view_dir) < 0.0 {
+                continue;
+            }
 
-                if w0_e >= 0.0 && w1_e >= 0.0 && w2_e >= 0.0 {
-                    let bary0 = w0_e * inv_area;
-                    let bary1 = w1_e * inv_area;
-                    let bary2 = w2_e * inv_area;
-                    let depth = bary0 * ndc0.z + bary1 * ndc1.z + bary2 * ndc2.z;
-                    let idx = py as usize * w + px as usize;
-                    if depth < depth_buf[idx] {
-                        depth_buf[idx] = depth;
-                        let base = idx * 4;
-                        color_buf[base] = r;
-                        color_buf[base + 1] = g;
-                        color_buf[base + 2] = b;
-                        color_buf[base + 3] = 255;
+            // Lighting – brightness scales the directional contribution
+            let ndl1 = face_normal.dot(light_dir).max(0.0);
+            let ndl2 = face_normal.dot(light_dir2).max(0.0);
+            let ambient = 0.15;
+            let intensity = (ambient + (0.55 * ndl1 + 0.35 * ndl2) * brightness).min(1.0);
+
+            let r = (color[0] * intensity).min(255.0) as u8;
+            let g = (color[1] * intensity).min(255.0) as u8;
+            let b = (color[2] * intensity).min(255.0) as u8;
+
+            // Collect edge adjacency info for the outline pass.
+            // Mimics THREE.EdgesGeometry: only hard edges are drawn.
+            if outline {
+                let verts = [(tri.v0, sx0, sy0, ndc0.z), (tri.v1, sx1, sy1, ndc1.z), (tri.v2, sx2, sy2, ndc2.z)];
+                for &(i, j) in &[(0usize, 1usize), (1, 2), (2, 0)] {
+                    let (va, sxa, sya, za) = verts[i];
+                    let (vb, sxb, syb, zb) = verts[j];
+                    let key = edge_key(va, vb);
+                    edge_map
+                        .entry(key)
+                        .and_modify(|info| {
+                            info.normals.push(face_normal);
+                        })
+                        .or_insert_with(|| EdgeInfo {
+                            screen: [(sxa, sya, za), (sxb, syb, zb)],
+                            normals: vec![face_normal],
+                        });
+                }
+            }
+
+            // Bounding box
+            let min_x = sx0.min(sx1).min(sx2).floor().max(0.0) as i32;
+            let max_x = sx0.max(sx1).max(sx2).ceil().min(width as f32 - 1.0) as i32;
+            let min_y = sy0.min(sy1).min(sy2).floor().max(0.0) as i32;
+            let max_y = sy0.max(sy1).max(sy2).ceil().min(height as f32 - 1.0) as i32;
+
+            let area = edge_function(sx0, sy0, sx1, sy1, sx2, sy2);
+            if area.abs() < 1e-6 {
+                continue;
+            }
+            let inv_area = 1.0 / area;
+
+            for py in min_y..=max_y {
+                for px in min_x..=max_x {
+                    let px_f = px as f32 + 0.5;
+                    let py_f = py as f32 + 0.5;
+
+                    let w0_e = edge_function(sx1, sy1, sx2, sy2, px_f, py_f);
+                    let w1_e = edge_function(sx2, sy2, sx0, sy0, px_f, py_f);
+                    let w2_e = edge_function(sx0, sy0, sx1, sy1, px_f, py_f);
+
+                    if w0_e >= 0.0 && w1_e >= 0.0 && w2_e >= 0.0 {
+                        let bary0 = w0_e * inv_area;
+                        let bary1 = w1_e * inv_area;
+                        let bary2 = w2_e * inv_area;
+                        let depth = bary0 * ndc0.z + bary1 * ndc1.z + bary2 * ndc2.z;
+                        let idx = py as usize * w + px as usize;
+                        if depth < depth_buf[idx] {
+                            depth_buf[idx] = depth;
+                            let base = idx * 4;
+                            color_buf[base] = r;
+                            color_buf[base + 1] = g;
+                            color_buf[base + 2] = b;
+                            color_buf[base + 3] = 255;
+                        }
                     }
                 }
             }
